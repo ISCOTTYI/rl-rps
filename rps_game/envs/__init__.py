@@ -1,1 +1,1 @@
-from rps_game.envs.grid_world import GridWorldEnv
+from rps_game.envs.grid_world import RPSEnv
