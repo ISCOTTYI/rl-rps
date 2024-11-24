@@ -1,3 +1,4 @@
+import os
 from enum import Enum
 import gymnasium as gym
 from gymnasium import spaces
@@ -11,7 +12,6 @@ Two pieces of opposing teams that can play RPS can be ontop of each other and th
 winning piece annihilates the loosing piece. Each round one player moves one
 piece.
 """
-
 
 class Directions(Enum):
     # access via e.g. Directions.stay.value
@@ -29,8 +29,8 @@ class RPSEnv(gym.Env):
     }
 
     def __init__(self, render_mode=None, size=5, n_pieces=18):
-        if render_mode != "console":
-            raise NotImplementedError()
+        # if render_mode != "console":
+        #     raise NotImplementedError()
         self.size = size  # The size of the square grid
         self.window_size = 512  # The size of the PyGame window
         self.n_pieces = n_pieces
@@ -67,6 +67,8 @@ class RPSEnv(gym.Env):
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
+        if render_mode == "human":
+            self._load_render_assets()
 
         """
         If human-rendering is used, `self.window` will be a reference
@@ -212,76 +214,81 @@ class RPSEnv(gym.Env):
         return observation, reward, terminated, False, info
 
     def render(self):
-        if self.render_mode == "rgb_array":
+        if self.render_mode == "human":
             return self._render_frame()
         elif self.render_mode == "console":
             return self._render_console()
     
     def _render_console(self):
         print(self.state)
-
-    def _render_frame(self): # TODO
-        if self.window is None and self.render_mode == "human":
+    
+    def _load_render_assets(self):
+        asset_base = "rps_game/envs/assets"
+        cell_size = self.window_size // self.size
+        self.images = {
+            1: pygame.image.load(os.path.join(asset_base, "rock.png")),
+            2: pygame.image.load(os.path.join(asset_base, "paper.png")),
+            3: pygame.image.load(os.path.join(asset_base, "scissors.png"))
+        }
+        for key, image in self.images.items():
+            self.images[key] = pygame.transform.scale(image, (cell_size // 2, cell_size // 2))
+    
+    def _render_frame(self):
+        if self.window is None:
             pygame.init()
             pygame.display.init()
-            self.window = pygame.display.set_mode((self.window_size, self.window_size))
-        if self.clock is None and self.render_mode == "human":
+            # Increase window width for scoreboard
+            self.window = pygame.display.set_mode((self.window_size + 150, self.window_size))
+        if self.clock is None:
             self.clock = pygame.time.Clock()
-
-        canvas = pygame.Surface((self.window_size, self.window_size))
-        canvas.fill((255, 255, 255))
-        pix_square_size = (
-            self.window_size / self.size
-        )  # The size of a single grid square in pixels
-
-        # First we draw the target
-        pygame.draw.rect(
-            canvas,
-            (255, 0, 0),
-            pygame.Rect(
-                pix_square_size * self._opponent_location,
-                (pix_square_size, pix_square_size),
-            ),
-        )
-        # Now we draw the agent
-        pygame.draw.circle(
-            canvas,
-            (0, 0, 255),
-            (self._agent_location + 0.5) * pix_square_size,
-            pix_square_size / 3,
-        )
-
-        # Finally, add some gridlines
+        colors = [(31, 119, 180), (214, 39, 40)]  # tab:blue and tab:red
+        bg_color = (255, 255, 255)  # White background
+        grid_color = (200, 200, 200)  # Light gray grid
+        cell_size = self.window_size // self.size
+        self.window.fill(bg_color)
+        # Draw grid
         for x in range(self.size + 1):
-            pygame.draw.line(
-                canvas,
-                0,
-                (0, pix_square_size * x),
-                (self.window_size, pix_square_size * x),
-                width=3,
-            )
-            pygame.draw.line(
-                canvas,
-                0,
-                (pix_square_size * x, 0),
-                (pix_square_size * x, self.window_size),
-                width=3,
-            )
+            pygame.draw.line(self.window, grid_color, (x * cell_size, 0), (x * cell_size, self.window_size))
+            pygame.draw.line(self.window, grid_color, (0, x * cell_size), (self.window_size, x * cell_size))
+        # Draw pieces
+        for player in range(2):  # Loop over players
+            for x in range(self.size):
+                for y in range(self.size):
+                    piece = self.state[player, x, y]
+                    if piece != 0:
+                        piece_color = colors[player]
+                        center = (y * cell_size + cell_size // 2, x * cell_size + cell_size // 2)
+                        pygame.draw.circle(self.window, piece_color, center, cell_size // 3)
 
-        if self.render_mode == "human":
-            # The following line copies our drawings from `canvas` to the visible window
-            self.window.blit(canvas, canvas.get_rect())
-            pygame.event.pump()
-            pygame.display.update()
-
-            # We need to ensure that human-rendering occurs at the predefined framerate.
-            # The following line will automatically add a delay to
-            # keep the framerate stable.
-            self.clock.tick(self.metadata["render_fps"])
-        else:  # rgb_array
-            return np.transpose(
-                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
-            )
+                        # Render the image at the piece's position
+                        image = self.images[piece]
+                        image_rect = image.get_rect(center=center)
+                        self.window.blit(image, image_rect)
+        # Draw scoreboard
+        scoreboard_x = self.window_size + 10
+        font = pygame.font.SysFont(None, 24)
+        for player in range(2):
+            player_color = colors[player]
+            player_text = font.render(f"Player {player}:", True, player_color)
+            self.window.blit(player_text, (scoreboard_x, 20 + player * 100))
+            # Count pieces
+            counts = {1: 0, 2: 0, 3: 0}
+            for x in range(self.size):
+                for y in range(self.size):
+                    piece = self.state[player, x, y]
+                    if piece in counts:
+                        counts[piece] += 1
+            # Render counts
+            for i, (piece, count) in enumerate(counts.items()):
+                text = font.render(f"{['Rock', 'Paper', 'Scissors'][piece - 1]}: {count}", True, player_color)
+                self.window.blit(text, (scoreboard_x, 40 + player * 100 + i * 20))
+        # Update display and manage frame rate
+        pygame.display.update()
+        self.clock.tick(self.metadata["render_fps"])
+        # Handle events to keep the window responsive
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
 
     def close(self):
         if self.window is not None:
